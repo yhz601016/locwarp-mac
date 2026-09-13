@@ -1,0 +1,136 @@
+{
+  "name": "locwarp-mac",
+  "version": "0.3.0",
+  "description": "iOS Virtual Location Simulator for macOS (fork of keezxc1223/locwarp)",
+  "author": "yhz601016",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "electron": "electron .",
+    "start": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dist": "electron-builder --mac --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:mac:arm64": "electron-builder --mac --arm64 --publish never",
+    "dist:mac:x64": "electron-builder --mac --x64 --publish never",
+    "dist:win": "electron-builder --win nsis --publish never"
+  },
+  "dependencies": {
+    "@maplibre/maplibre-gl-leaflet": "^0.1.3",
+    "leaflet": "^1.9.4",
+    "maplibre-gl": "^6.6.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "s2-geometry": "^1.2.10",
+    "supercluster": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.12",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/supercluster": "^7.1.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^10.0.3",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.locwarp.mac",
+    "productName": "LocWarp",
+    "copyright": "MIT — LocWarp Mac (fork of keezxc1223/locwarp)",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist-py/locwarp-backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "afterPack": "build/afterPack.js",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "minimumSystemVersion": "13.0",
+      "darkModeSupport": true,
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "extendInfo": {
+        "NSLocationUsageDescription": "LocWarp 會用電腦目前位置把地圖置中（選用）。",
+        "NSLocationWhenInUseUsageDescription": "LocWarp 會用電腦目前位置把地圖置中（選用）。",
+        "LSApplicationCategoryType": "public.app-category.utilities"
+      }
+    },
+    "dmg": {
+      "sign": false,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "requireAdministrator",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LocWarp",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "include": "build/installer.nsh"
+    }
+  }
+}

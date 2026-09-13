@@ -1,0 +1,25 @@
+# Keep LF everywhere so shell scripts / launchers work when the repo is
+# cloned on macOS even if it was committed from Windows.
+* text=auto eol=lf
+*.sh text eol=lf
+*.command text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.md text eol=lf
+*.spec text eol=lf
+
+# Windows-only bits may stay CRLF
+*.bat text eol=crlf
+*.nsh text eol=crlf
+
+# Binaries
+*.png binary
+*.icns binary
+*.ico binary
+*.bmp binary
+*.gif binary

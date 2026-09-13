@@ -1,0 +1,119 @@
+from pathlib import Path
+from typing import TypedDict
+
+# Paths
+DATA_DIR = Path.home() / ".locwarp"
+DATA_DIR.mkdir(exist_ok=True)
+SETTINGS_FILE = DATA_DIR / "settings.json"
+BOOKMARKS_FILE = DATA_DIR / "bookmarks.json"
+ROUTES_FILE = DATA_DIR / "routes.json"
+RECENT_PLACES_FILE = DATA_DIR / "recent_places.json"
+# Persisted UDID → DeviceName cache. Populated whenever USB / usbmuxd
+# exposes the user's actual DeviceName (e.g. "My iPhone") so a later
+# WiFi-only session — where peer_info only carries DeviceClass ("iPhone")
+# — can still display the user's chosen name.
+DEVICE_NAMES_FILE = DATA_DIR / "device_names.json"
+
+# OSRM
+OSRM_BASE_URL = "https://router.project-osrm.org"
+
+# Routing engines the user can pick from in the UI. 'osrm' = the original
+# demo server (kept as default for backwards compat). 'osrm_fossgis' is
+# the same OSRM software hosted by FOSSGIS at a different URL with split
+# /routed-{car|foot|bike} prefixes per profile. 'valhalla' is a different
+# routing engine entirely (POST JSON, polyline6 geometry).
+ROUTE_ENGINE_OSRM = "osrm"
+ROUTE_ENGINE_OSRM_FOSSGIS = "osrm_fossgis"
+ROUTE_ENGINE_VALHALLA = "valhalla"
+ROUTE_ENGINE_BROUTER = "brouter"
+ROUTE_ENGINES_ALLOWED = (
+    ROUTE_ENGINE_OSRM,
+    ROUTE_ENGINE_OSRM_FOSSGIS,
+    ROUTE_ENGINE_VALHALLA,
+    ROUTE_ENGINE_BROUTER,
+)
+DEFAULT_ROUTE_ENGINE = ROUTE_ENGINE_OSRM
+OSRM_FOSSGIS_BASE_URL = "https://routing.openstreetmap.de"
+VALHALLA_BASE_URL = "https://valhalla1.openstreetmap.de"
+BROUTER_BASE_URL = "https://brouter.de"
+
+# Nominatim
+NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
+NOMINATIM_USER_AGENT = "LocWarp-Mac/0.3.0 (+https://github.com/yhz601016/locwarp-mac)"
+
+# Photon (komoot) — OSM-backed, no API key, more forgiving than Nominatim
+# for fuzzy / typo queries and unrestricted on User-Agent.
+PHOTON_BASE_URL = "https://photon.komoot.io"
+
+
+class SpeedProfile(TypedDict):
+    """Runtime speed profile consumed by the simulation engine."""
+    speed_mps: float        # metres per second
+    jitter: float           # ± jitter added to each tick for realism (metres)
+    update_interval: float  # tick period (seconds)
+
+
+# Speed profiles (m/s). Defaults align with the frontend ControlPanel
+# preset chips (10.8 / 19.8 / 60 km/h). v0.2.84 lifted these from the
+# v0.1.0 numbers (1.4 / 2.8 / 11.1) which dated from when "running" still
+# meant actual running; the i18n label was later renamed to 腳踏車 and
+# the chip value bumped to bike speed without touching the backend.
+SPEED_PROFILES: dict[str, SpeedProfile] = {
+    "walking": {"speed_mps": 3.0, "jitter": 0.5, "update_interval": 1.0},
+    "running": {"speed_mps": 5.5, "jitter": 0.7, "update_interval": 0.5},
+    "driving": {"speed_mps": 16.7, "jitter": 1.2, "update_interval": 0.5},
+}
+
+
+def make_speed_profile(speed_kmh: float) -> SpeedProfile:
+    """Build a speed profile dict from a km/h value."""
+    speed_mps = speed_kmh / 3.6
+    jitter = min(speed_mps * 0.2, 1.5)
+    update_interval = 0.5 if speed_mps > 5 else 1.0
+    return {"speed_mps": speed_mps, "jitter": jitter, "update_interval": update_interval}
+
+
+def resolve_speed_profile(
+    profile_name: str,
+    speed_kmh: float | None = None,
+    speed_min_kmh: float | None = None,
+    speed_max_kmh: float | None = None,
+) -> SpeedProfile:
+    """Return a speed profile, picking a random km/h from the range if provided.
+    Precedence: range > fixed custom > mode default."""
+    import random
+    if speed_min_kmh is not None and speed_max_kmh is not None:
+        lo, hi = sorted((float(speed_min_kmh), float(speed_max_kmh)))
+        if lo <= 0:
+            lo = 0.1
+        return make_speed_profile(random.uniform(lo, hi))
+    if speed_kmh:
+        return make_speed_profile(speed_kmh)
+    return SPEED_PROFILES[profile_name]
+
+
+# Cooldown table: (max_distance_km, cooldown_seconds)
+COOLDOWN_TABLE = [
+    (1, 0),
+    (5, 30),
+    (10, 120),
+    (25, 300),
+    (100, 900),
+    (250, 1500),
+    (500, 2700),
+    (750, 3600),
+    (1000, 5400),
+    (float("inf"), 7200),
+]
+
+# Reconnect
+RECONNECT_BASE_DELAY = 2.0
+RECONNECT_MAX_DELAY = 60.0
+RECONNECT_MAX_RETRIES = 30
+
+# Default location (Taipei City Hall)
+DEFAULT_LOCATION = {"lat": 25.0375, "lng": 121.5637}
+
+# Server
+API_HOST = "0.0.0.0"
+API_PORT = 8777

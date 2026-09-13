@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 下載最新版 LocWarp Mac
+    url: https://github.com/yhz601016/locwarp-mac/releases
+    about: 開 Issue 前請先確認已使用最新版本（設定頁會顯示是否有新版）
+  - name: 使用說明 (README)
+    url: https://github.com/yhz601016/locwarp-mac#安裝一般使用者
+    about: 安裝、Gatekeeper、iPhone 開發者模式、DDI 自動掛載等常見問題
+  - name: 上游專案 keezxc1223/locwarp（Windows 版）
+    url: https://github.com/keezxc1223/locwarp
+    about: 與 macOS 無關、屬於核心模擬邏輯的問題可先查上游 Issues

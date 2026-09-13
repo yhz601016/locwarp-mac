@@ -1,0 +1,97 @@
+name: pymobiledevice3 update watch
+
+# "iOS 更新後持續支援" 的自動化核心。
+#
+# 定位模擬能不能跟上新的 iOS 版本，取決於 pymobiledevice3 對該版本的支援。
+# 這個 workflow 每週檢查 PyPI 是否有新版 pymobiledevice3：
+#   1. 有新版 -> 更新 backend/requirements.txt 的最低版本
+#   2. 冒煙測試：安裝新版、確認我們依賴的 API（USE_USERSPACE_TUNNEL、
+#      auto_mount_personalized、CoreDeviceTunnelProxy…）都還在、後端可以 import
+#   3. 通過 -> 自動 bump 版本、commit、打 tag，並觸發 build-mac.yml 出新 DMG
+#   4. 失敗 -> 開一個 Issue 提醒人工處理
+#
+# 也可以手動觸發（workflow_dispatch）。
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # 每週一 03:00 UTC（台北 11:00）
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Bump + release even if the pin already matches PyPI'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.check.outputs.updated }}
+      pmd3: ${{ steps.check.outputs.latest }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Compare requirements pin with PyPI
+        id: check
+        env:
+          FORCE: ${{ inputs.force }}
+        run: python scripts/check_pmd3_update.py
+
+      - name: Smoke test the new pymobiledevice3 against our backend
+        if: steps.check.outputs.updated == 'true'
+        id: smoke
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python scripts/smoke_test_backend.py
+
+      - name: Bump app version, commit, tag
+        if: steps.check.outputs.updated == 'true'
+        id: bump
+        run: |
+          cd frontend
+          npm version patch --no-git-tag-version >/dev/null
+          VERSION=$(node -p "require('./package.json').version")
+          cd ..
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/requirements.txt frontend/package.json frontend/package-lock.json
+          git commit -m "chore: bump pymobiledevice3 to ${{ steps.check.outputs.latest }} (v$VERSION)"
+          git tag "v$VERSION"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "v$VERSION"
+
+      # A tag pushed with GITHUB_TOKEN does not fire `on: push` in other
+      # workflows, so dispatch the build explicitly on the new tag.
+      - name: Trigger macOS build + release
+        if: steps.check.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-mac.yml --ref "v${{ steps.bump.outputs.version }}" -f release=true
+
+      - name: Open an issue if the smoke test failed
+        if: failure() && steps.check.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "pymobiledevice3 ${{ steps.check.outputs.latest }} 需要人工調整" \
+            --body "自動更新 pymobiledevice3 到 ${{ steps.check.outputs.latest }} 時冒煙測試失敗。請查看 workflow log：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "pymobiledevice3" || true

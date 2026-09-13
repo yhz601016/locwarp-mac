@@ -1,0 +1,50 @@
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# ── Node / Frontend ─────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── PyInstaller / electron-builder build artifacts ──
+dist-py/
+build-py/
+frontend/release/
+frontend/release-tmp/
+frontend/release-tmp*/
+frontend/release-new/
+*.spec.bak
+
+# ── Runtime state ───────────────────────────────────
+wifi_tunnel_info.json
+backend/wifi_tunnel_info.json
+*.log
+
+# ── IDE / OS ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Claude Code (per-machine state) ─────────────────
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# ── Source images kept in repo root during dev ──────
+# (icon.png / icon.ico are kept in frontend/build/ — committed)
+S__*.png
+S__*.jpg
+_geoport/
+
+# ── macOS build ─────────────────────────────────────
+*.dmg
+frontend/build/icon.iconset/
+backend/*.spec.bak

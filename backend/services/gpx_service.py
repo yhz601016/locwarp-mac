@@ -1,0 +1,179 @@
+"""GPX import / export service using *gpxpy*."""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+
+import gpxpy
+import gpxpy.gpx
+
+from models.schemas import Coordinate
+
+logger = logging.getLogger(__name__)
+
+
+class GpxService:
+    """Parse and generate GPX files."""
+
+    # ------------------------------------------------------------------
+    # Import
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def parse_gpx(gpx_content: str) -> list[Coordinate]:
+        """Parse raw GPX XML into a flat list of :class:`Coordinate`.
+
+        The method looks at tracks first, then routes, then waypoints --
+        whichever source has points wins.
+        """
+        gpx = gpxpy.parse(gpx_content)
+        coords: list[Coordinate] = []
+
+        # 1. Track points
+        for track in gpx.tracks:
+            for segment in track.segments:
+                for pt in segment.points:
+                    coords.append(Coordinate(lat=pt.latitude, lng=pt.longitude))
+
+        if coords:
+            logger.info("Parsed %d track points from GPX", len(coords))
+            return coords
+
+        # 2. Route points
+        for route in gpx.routes:
+            for pt in route.points:
+                coords.append(Coordinate(lat=pt.latitude, lng=pt.longitude))
+
+        if coords:
+            logger.info("Parsed %d route points from GPX", len(coords))
+            return coords
+
+        # 3. Waypoints
+        for pt in gpx.waypoints:
+            coords.append(Coordinate(lat=pt.latitude, lng=pt.longitude))
+
+        logger.info("Parsed %d waypoints from GPX", len(coords))
+        return coords
+
+    @staticmethod
+    def parse_gpx_named(gpx_content: str) -> list[dict]:
+        """Parse GPX into points that keep their name (for bookmark import).
+
+        Prefers ``<wpt>`` waypoints (named POIs, e.g. exported coordinates);
+        if there are none, falls back to track then route points (unnamed).
+        Each dict has ``lat``, ``lng``, ``name`` and ``description``.
+        """
+        gpx = gpxpy.parse(gpx_content)
+        points: list[dict] = []
+
+        for pt in gpx.waypoints:
+            points.append({
+                "lat": pt.latitude, "lng": pt.longitude,
+                "name": pt.name or "", "description": pt.description or "",
+            })
+        if points:
+            logger.info("Parsed %d named waypoints from GPX", len(points))
+            return points
+
+        for track in gpx.tracks:
+            for segment in track.segments:
+                for pt in segment.points:
+                    points.append({"lat": pt.latitude, "lng": pt.longitude,
+                                   "name": "", "description": ""})
+        if points:
+            return points
+
+        for route in gpx.routes:
+            for pt in route.points:
+                points.append({"lat": pt.latitude, "lng": pt.longitude,
+                               "name": "", "description": ""})
+        return points
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def generate_gpx(
+        coords: list[dict],
+        name: str = "LocWarp Route",
+    ) -> str:
+        """Generate a GPX XML string from a list of point dicts.
+
+        Each dict should contain at least ``lat`` and ``lng``.  An optional
+        ``timestamp`` field (ISO-8601 string or :class:`datetime`) is written
+        as the point's time element.
+
+        Parameters
+        ----------
+        coords:
+            Ordered points, e.g. ``[{"lat": 25.0, "lng": 121.5, "timestamp": ...}, ...]``
+        name:
+            Human-readable name embedded in the GPX ``<trk><name>`` element.
+
+        Returns
+        -------
+        str
+            Well-formed GPX 1.1 XML document.
+        """
+        gpx = gpxpy.gpx.GPX()
+
+        track = gpxpy.gpx.GPXTrack(name=name)
+        gpx.tracks.append(track)
+
+        segment = gpxpy.gpx.GPXTrackSegment()
+        track.segments.append(segment)
+
+        for pt in coords:
+            lat = pt["lat"]
+            lng = pt["lng"]
+            time = pt.get("timestamp")
+
+            if isinstance(time, str):
+                try:
+                    time = datetime.fromisoformat(time)
+                except (ValueError, TypeError):
+                    time = None
+
+            if time is not None and time.tzinfo is None:
+                time = time.replace(tzinfo=timezone.utc)
+
+            elevation = pt.get("elevation") or pt.get("ele")
+            track_point = gpxpy.gpx.GPXTrackPoint(
+                latitude=lat,
+                longitude=lng,
+                elevation=float(elevation) if elevation is not None else None,
+                time=time,
+            )
+            segment.points.append(track_point)
+
+        return gpx.to_xml()
+
+    @staticmethod
+    def generate_gpx_waypoints(
+        points: list[dict],
+        name: str = "LocWarp Bookmarks",
+    ) -> str:
+        """Generate a GPX XML string of named waypoints from point dicts.
+
+        Unlike :meth:`generate_gpx` (which emits a ``<trk>`` path), this emits
+        standalone ``<wpt>`` elements -- the correct representation for saved
+        coordinates / POIs, which are individual locations rather than a route.
+
+        Each dict should contain ``lat`` and ``lng``; optional ``name`` and
+        ``description`` are written as the waypoint's name/desc elements.
+        """
+        gpx = gpxpy.gpx.GPX()
+        gpx.name = name
+
+        for pt in points:
+            waypoint = gpxpy.gpx.GPXWaypoint(
+                latitude=pt["lat"],
+                longitude=pt["lng"],
+                name=pt.get("name") or None,
+                description=pt.get("description") or None,
+            )
+            gpx.waypoints.append(waypoint)
+
+        return gpx.to_xml()

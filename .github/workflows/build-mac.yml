@@ -1,0 +1,119 @@
+name: Build macOS
+
+# Builds a native DMG for Apple Silicon (arm64) and Intel (x64).
+# The PyInstaller backend is architecture-specific, so each arch is built on a
+# matching runner instead of cross-compiling.
+#
+# Triggers:
+#   * push of a `v*` tag            -> build + publish GitHub Release
+#   * workflow_dispatch             -> build only (or release when `release` = true)
+#   * called by pmd3-watch.yml      -> automatic release after a pymobiledevice3 bump
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish a GitHub Release from this build'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '22'
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15          # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel    # Intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt pyinstaller
+          python scripts/smoke_test_backend.py
+
+      - name: Build backend (PyInstaller)
+        working-directory: backend
+        run: |
+          python -m PyInstaller locwarp-backend.spec --noconfirm \
+            --distpath "$GITHUB_WORKSPACE/dist-py" \
+            --workpath "$GITHUB_WORKSPACE/build-py/backend"
+          ls -la "$GITHUB_WORKSPACE/dist-py/locwarp-backend" | head
+          "$GITHUB_WORKSPACE/dist-py/locwarp-backend/locwarp-backend" --help >/dev/null 2>&1 || true
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (Vite)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Package DMG (electron-builder)
+        working-directory: frontend
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+
+      - name: List artifacts
+        run: ls -la frontend/release/ | grep -E '\.(dmg|zip)$'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocWarp-mac-${{ matrix.arch }}
+          path: |
+            frontend/release/*.dmg
+            frontend/release/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Read versions for release notes
+        id: meta
+        run: |
+          echo "pmd3=$(grep -oE 'pymobiledevice3[>=]+[0-9.]+' backend/requirements.txt | head -1)" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./frontend/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.meta.outputs.version) }}
+          name: LocWarp Mac ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.meta.outputs.version) }}
+          body_path: .github/release-footer.md
+          files: |
+            artifacts/*.dmg
+            artifacts/*.zip
+          fail_on_unmatched_files: true
