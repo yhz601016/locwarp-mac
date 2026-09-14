@@ -100,6 +100,45 @@ a = Analysis(
 )
 
 
+def _openssl_wanted_by_cryptography(names):
+    """Return {libname: absolute path} for the OpenSSL dylibs that
+    cryptography's _rust.abi3.so resolves through its LC_RPATH entries.
+    Empty when the wheel is statically linked (the normal PyPI wheel)."""
+    import os
+    import subprocess
+
+    found = {}
+    try:
+        import cryptography.hazmat.bindings._rust as rust_mod
+        so_path = rust_mod.__file__
+    except Exception as exc:
+        print(f"[spec] cryptography _rust not importable ({exc}); skipping rpath probe")
+        return found
+    try:
+        out = subprocess.run(["otool", "-l", so_path], capture_output=True, text=True, timeout=30).stdout
+    except Exception as exc:
+        print(f"[spec] otool failed ({exc}); skipping rpath probe")
+        return found
+    rpaths = []
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if "cmd LC_RPATH" in line:
+            for j in range(i, min(i + 4, len(lines))):
+                if "path " in lines[j]:
+                    rpaths.append(lines[j].split("path ", 1)[1].split(" (offset")[0].strip())
+                    break
+    so_dir = os.path.dirname(so_path)
+    for rp in rpaths:
+        rp_abs = rp.replace("@loader_path", so_dir).replace("@executable_path", os.path.dirname(sys.executable))
+        for base in names:
+            cand = os.path.normpath(os.path.join(rp_abs, base))
+            if base not in found and os.path.isfile(cand):
+                found[base] = cand
+    if rpaths:
+        print(f"[spec] cryptography rpaths: {rpaths}")
+    return found
+
+
 def _dedupe_openssl_dylibs(analysis):
     """macOS: keep exactly one libssl / libcrypto, the newest one.
 
@@ -135,13 +174,30 @@ def _dedupe_openssl_dylibs(analysis):
     if not groups:
         return
 
+    # What does cryptography's Rust extension actually want? Resolve its
+    # LC_RPATH entries and prefer the libssl/libcrypto found there — that is
+    # the exact file dyld would load in a normal venv, so it is guaranteed
+    # to export every symbol the extension needs.
+    wanted = _openssl_wanted_by_cryptography(names)
+    for base, src in wanted.items():
+        print(f"[spec] {base}: cryptography's rpath resolves to {src}")
+
     best_src = {}
     for base, items in groups.items():
         srcs = {src for _d, src, _k in items}
-        best = max(srcs, key=version_of)
+        if base in wanted:
+            srcs.add(wanted[base])
+        best = wanted.get(base) or max(srcs, key=version_of)
         best_src[base] = best
         print(f"[spec] {base}: {len(srcs)} candidate(s); keeping {best} "
               f"(OpenSSL {'.'.join(map(str, version_of(best)))})")
+    # cryptography needs a lib that PyInstaller never collected at all
+    # (e.g. only Python's copy was found): add it as a fresh top-level entry.
+    for base, src in wanted.items():
+        if base not in groups:
+            best_src[base] = src
+            entries.append((base, src, "BINARY"))
+            print(f"[spec] {base}: not collected by analysis; adding {src}")
 
     seen = set()
     new_entries = []

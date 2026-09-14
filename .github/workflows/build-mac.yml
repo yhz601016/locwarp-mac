@@ -58,7 +58,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt pyinstaller
+          # Make sure cryptography is the official pre-built wheel (OpenSSL
+          # statically linked). A source build links Homebrew's OpenSSL 3.5
+          # dynamically and then clashes with Python's bundled 3.0 inside
+          # the PyInstaller bundle.
+          python -m pip install --only-binary=:all: --force-reinstall --no-deps cryptography
           python scripts/smoke_test_backend.py
+          echo "--- cryptography wheel diagnostics ---"
+          python -m pip show cryptography | head -3
+          python - <<'EOF'
+          import subprocess, cryptography.hazmat.bindings._rust as r
+          print(r.__file__)
+          print(subprocess.run(["otool", "-L", r.__file__], capture_output=True, text=True).stdout)
+          EOF
 
       - name: Build backend (PyInstaller)
         working-directory: backend
