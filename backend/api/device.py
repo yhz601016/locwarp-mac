@@ -687,7 +687,9 @@ async def _attempt_tunnel_restart(
         # already exists, so the old (now-dead) RSD lockdown gets torn
         # down correctly.
         dm = _dm()
-        dev_info = await dm.connect_wifi_tunnel(new_rsd_address, new_rsd_port)
+        dev_info = await dm.connect_wifi_tunnel(
+            new_rsd_address, new_rsd_port, open_connection=new_runner.dial,
+        )
 
         # Rebuild the sim engine bound to the new location service. The
         # old engine pointed at the dead RSD and would throw
@@ -1312,7 +1314,11 @@ async def wifi_tunnel_start_and_connect(req: WifiTunnelStartRequest):
             detail={"code": "max_devices_reached", "message": f"已連接最多 {MAX_DEVICES} 台裝置"},
         )
     try:
-        info = await dm.connect_wifi_tunnel(rsd_address, rsd_port)
+        _runner = _tunnels.get(temp_key) if temp_key else None
+        info = await dm.connect_wifi_tunnel(
+            rsd_address, rsd_port,
+            open_connection=getattr(_runner, "dial", None),
+        )
         # v0.2.60: Drop the stale engine from the prior USB conn so
         # create_engine_for_device rebuilds a fresh one bound to the new
         # WiFi RSD. v0.2.57 made create_engine_for_device idempotent (to

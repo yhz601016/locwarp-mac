@@ -313,24 +313,44 @@ class DeviceManager:
         logger.debug("Establishing TCP tunnel for %s (iOS %s)", udid, ios_version)
 
         try:
-            proxy = await CoreDeviceTunnelProxy.create(lockdown)
-            tunnel_ctx = proxy.start_tcp_tunnel()
-            tunnel_result = await tunnel_ctx.__aenter__()
+            if tunnel_mode() == "kernel":
+                # Root / Administrator: kernel TUN (utun / wintun). Same path as
+                # the upstream Windows build; supports several devices at once.
+                proxy = await CoreDeviceTunnelProxy.create(lockdown)
+                tunnel_ctx = proxy.start_tcp_tunnel()
+                tunnel_result = await tunnel_ctx.__aenter__()
+                logger.info("Kernel tunnel established for %s: %s:%s",
+                            udid, tunnel_result.address, tunnel_result.port)
+                rsd = RemoteServiceDiscoveryService((tunnel_result.address, tunnel_result.port))
+                await rsd.connect()
+                logger.info("RSD connected for %s", udid)
+                return _ActiveConnection(
+                    udid=udid,
+                    lockdown=rsd,
+                    ios_version=ios_version,
+                    tunnel_proxy=proxy,
+                    tunnel_context=tunnel_ctx,
+                    rsd=rsd,
+                    usbmux_lockdown=lockdown,
+                )
 
-            logger.info("Tunnel established for %s: %s:%s",
-                        udid, tunnel_result.address, tunnel_result.port)
-
-            # Create RSD over the tunnel
-            rsd = RemoteServiceDiscoveryService((tunnel_result.address, tunnel_result.port))
-            await rsd.connect()
-            logger.info("RSD connected for %s", udid)
-
+            # No root (LocWarp Mac default). pymobiledevice3 picks the best
+            # root-free transport: on macOS it rides Apple's own `remoted`
+            # tunnel (fast, coexists with Xcode); elsewhere, or if remoted is
+            # unavailable, an in-process userspace TCP/IP stack. Either way
+            # the returned RSD already carries the right dialer — a plain
+            # socket to the tunnel address would get "No route to host".
+            from pymobiledevice3.remote.rsd_tunnel import PreferredRsdTunnel
+            handle = PreferredRsdTunnel(serial=udid, autopair=True)
+            rsd = await handle.aopen()
+            kind = type(handle._handle).__name__ if handle._handle is not None else "?"
+            logger.info("No-root RSD established for %s via %s (%s:%s)",
+                        udid, kind, rsd.service.address[0], rsd.service.address[1])
             return _ActiveConnection(
                 udid=udid,
                 lockdown=rsd,
                 ios_version=ios_version,
-                tunnel_proxy=proxy,
-                tunnel_context=tunnel_ctx,
+                tunnel_context=handle,   # PreferredRsdTunnel is an async context manager
                 rsd=rsd,
                 usbmux_lockdown=lockdown,
             )
@@ -713,7 +733,7 @@ class DeviceManager:
     # ------------------------------------------------------------------
 
     async def connect_wifi_tunnel(
-        self, rsd_address: str, rsd_port: int
+        self, rsd_address: str, rsd_port: int, open_connection=None,
     ) -> DeviceInfo:
         """Connect to a device via an existing WiFi tunnel.
 
@@ -731,7 +751,12 @@ class DeviceManager:
         # TUN interface routes may take a few seconds to become reachable
         # after the tunnel process reports ready, so retry with backoff.
         for attempt in range(1, 11):
-            rsd = RemoteServiceDiscoveryService((rsd_address, rsd_port))
+            # `open_connection` is the userspace tunnel's relay dialer (see
+            # core/wifi_tunnel.py). Without it a userspace-mode tunnel address
+            # is unreachable from a kernel socket ("No route to host").
+            rsd = RemoteServiceDiscoveryService(
+                (rsd_address, rsd_port), open_connection=open_connection,
+            )
             try:
                 await rsd.connect()
                 last_exc = None

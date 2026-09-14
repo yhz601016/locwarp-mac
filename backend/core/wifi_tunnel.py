@@ -29,14 +29,24 @@ class TunnelRunner:
         # having to re-resolve the udid.
         self.target_ip: str | None = None
         self.target_port: int | None = None
+        # asyncio.open_connection-compatible dialer for the tunnel address.
+        # None in kernel-TUN mode (the address is kernel-routable); in
+        # userspace mode it relays through the in-process PyTCP stack and
+        # MUST be handed to RemoteServiceDiscoveryService(open_connection=).
+        self.dial = None
 
     def is_running(self) -> bool:
         return self.task is not None and not self.task.done()
 
     async def _run(self, udid: str, ip: str, port: int) -> None:
+        from pymobiledevice3.remote import tunnel_service
         from pymobiledevice3.remote.tunnel_service import (
             create_core_device_tunnel_service_using_remotepairing,
         )
+        from core.platform_compat import tunnel_mode
+        # A finished UserspaceRsdTunnel (USB path) resets this flag to False on
+        # close, so re-assert the configured mode right before we build ours.
+        tunnel_service.USE_USERSPACE_TUNNEL = (tunnel_mode() == "userspace")
         try:
             logger.info("Connecting to RemotePairing service at %s:%d", ip, port)
             service = await create_core_device_tunnel_service_using_remotepairing(
@@ -45,6 +55,20 @@ class TunnelRunner:
             logger.info("RemotePairing connected (identifier=%s)", service.remote_identifier)
 
             async with service.start_tcp_tunnel() as tunnel:
+                dial_plane = None
+                try:
+                    from pymobiledevice3.remote.userspace_tunnel import (
+                        UserspaceDialPlane, UserspaceTun,
+                    )
+                    tun = getattr(tunnel.client, "tun", None)
+                    if isinstance(tun, UserspaceTun):
+                        tun.set_peer(tunnel.address)
+                        dial_plane = UserspaceDialPlane(tun, tunnel.address)
+                        await dial_plane.__aenter__()
+                        self.dial = dial_plane.dial
+                        logger.info("Userspace WiFi tunnel: relay dialer ready")
+                except ImportError:
+                    pass
                 self.info = {
                     "rsd_address": tunnel.address,
                     "rsd_port": tunnel.port,
@@ -88,6 +112,12 @@ class TunnelRunner:
                         "Tunnel underlying TCP socket died (sock_read_task exited); "
                         "exiting runner so watchdog can restart"
                     )
+                if dial_plane is not None:
+                    try:
+                        await dial_plane.__aexit__(None, None, None)
+                    except Exception:
+                        logger.debug("dial plane teardown failed", exc_info=True)
+                    self.dial = None
         except BaseException as exc:
             self._error = exc
             self._ready.set()

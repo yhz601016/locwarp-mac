@@ -49,6 +49,7 @@ for pkg in (
     "developer_disk_image",  # Personalized DDI download (auto-mount on macOS)
     "pyimg4",
     "qh3",                   # imported by tunnel_service even though we only use TCP tunnels
+    "apple_compress",        # macOS-only LZFSE backend used by pyimg4 (Personalized DDI)
     "psutil",
     "ifaddr",
     "construct",
@@ -59,8 +60,39 @@ for pkg in (
     binaries += b
     hidden += h
 
-# importlib.metadata lookups performed at import time.
-for pkg in ("pyimg4", "pymobiledevice3", "developer_disk_image", "pmd_pytcp"):
+# importlib.metadata lookups performed at import time. Walk pymobiledevice3's
+# whole dependency tree so a package that reads its own version (pyimg4 ->
+# apple_compress on macOS, ...) never fails with "No package metadata was
+# found" inside the frozen bundle.
+def _dependency_closure(root):
+    from importlib.metadata import PackageNotFoundError, requires
+    from packaging.requirements import Requirement
+
+    seen, todo = set(), [root]
+    while todo:
+        name = todo.pop()
+        key = name.lower().replace("_", "-")
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            reqs = requires(name) or []
+        except PackageNotFoundError:
+            continue
+        for r in reqs:
+            try:
+                req = Requirement(r)
+            except Exception:
+                continue
+            if req.marker is not None and not req.marker.evaluate({"extra": ""}):
+                continue
+            todo.append(req.name)
+    return sorted(seen)
+
+
+for pkg in set(_dependency_closure("pymobiledevice3")) | {
+    "pyimg4", "pymobiledevice3", "developer_disk_image", "pmd_pytcp", "apple_compress",
+}:
     datas += _metadata(pkg)
 
 # Web stack.

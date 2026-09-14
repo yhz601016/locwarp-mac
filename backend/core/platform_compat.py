@@ -88,17 +88,22 @@ def tunnel_mode() -> str:
 
 
 def max_devices() -> int:
-    """The userspace PyTCP stack is a process-global singleton, so only one
-    tunnel (= one iOS 17+ iPhone) fits per process. Kernel mode keeps the
-    original three-device cap."""
-    return 1 if tunnel_mode() == "userspace" else 3
+    """Kernel mode: the upstream three-device cap.
+
+    No-root mode on macOS rides Apple's own `remoted` tunnel (one per
+    device), so several iPhones work there too. On Windows / Linux the
+    no-root path is the in-process PyTCP stack, a process-global singleton,
+    so only one iOS 17+ iPhone fits per process."""
+    if tunnel_mode() == "kernel" or IS_MAC:
+        return 3
+    return 1
 
 
 def privilege_hint() -> str:
     if IS_MAC:
         return (
-            "macOS：免權限模式一次只能連一支 iPhone；要同時連多支請在終端機用 "
-            "`sudo python3 start.py` 啟動（kernel tunnel 模式）。"
+            "macOS：請確認 iPhone 已解鎖、已按「信任」、開發者模式已開啟，然後重新插拔 USB。"
+            "詳細原因請看 ~/.locwarp/logs/backend.log。"
         )
     if IS_WIN:
         return "Windows：請以系統管理員身份執行 LocWarp（或設定 LOCWARP_TUNNEL_MODE=userspace）。"
