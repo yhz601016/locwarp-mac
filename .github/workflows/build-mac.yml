@@ -38,16 +38,17 @@ jobs:
           - runner: macos-15-intel    # Intel
             arch: x64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -66,7 +67,7 @@ jobs:
             --distpath "$GITHUB_WORKSPACE/dist-py" \
             --workpath "$GITHUB_WORKSPACE/build-py/backend"
           ls -la "$GITHUB_WORKSPACE/dist-py/locwarp-backend" | head
-          "$GITHUB_WORKSPACE/dist-py/locwarp-backend/locwarp-backend" --help >/dev/null 2>&1 || true
+          test -x "$GITHUB_WORKSPACE/dist-py/locwarp-backend/locwarp-backend"
 
       - name: Install frontend deps
         working-directory: frontend
@@ -85,7 +86,7 @@ jobs:
       - name: List artifacts
         run: ls -la frontend/release/ | grep -E '\.(dmg|zip)$'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: LocWarp-mac-${{ matrix.arch }}
           path: |
@@ -97,9 +98,10 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release == true
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
         with:
           path: artifacts
           merge-multiple: true
