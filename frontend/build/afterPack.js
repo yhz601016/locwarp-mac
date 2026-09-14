@@ -2,12 +2,18 @@
 //
 // We ship without an Apple Developer certificate, so electron-builder skips
 // signing ("identity": null). Apple Silicon refuses to launch *completely*
-// unsigned Mach-O binaries, so we ad-hoc sign the whole bundle (identity "-")
+// unsigned Mach-O binaries, so we ad-hoc sign the app bundle (identity "-")
 // here — that is enough for the app to run once the user clears the
-// quarantine flag (right-click → Open, or `xattr -cr /Applications/LocWarp.app`).
+// quarantine flag (right-click → Open, or `xattr -cr`).
 //
-// The PyInstaller backend lives in Contents/Resources/backend; make sure its
-// launcher keeps the executable bit and gets covered by the ad-hoc signature.
+// IMPORTANT: do NOT re-sign anything under Contents/Resources/backend.
+// PyInstaller already ad-hoc signs its bootloader and every collected
+// .so/.dylib at build time, and the bootloader carries the Python module
+// archive appended to the Mach-O. Running `codesign --force` on it again
+// rewrites the binary layout and corrupts that archive: early imports still
+// work, later ones die with "zlib.error: unknown compression method"
+// (v0.3.3 shipped exactly that bug). `codesign --deep` on the .app treats
+// Resources as data and leaves those files alone.
 const { execSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
@@ -17,22 +23,12 @@ exports.default = async function afterPack(context) {
 
   const appName = context.packager.appInfo.productFilename
   const appPath = path.join(context.appOutDir, `${appName}.app`)
-  const backendDir = path.join(appPath, 'Contents', 'Resources', 'backend')
-  const backendExe = path.join(backendDir, 'locwarp-backend')
+  const backendExe = path.join(appPath, 'Contents', 'Resources', 'backend', 'locwarp-backend')
 
   if (fs.existsSync(backendExe)) {
     fs.chmodSync(backendExe, 0o755)
-    // Ad-hoc sign every Mach-O inside the backend folder first (nested code
-    // in Resources is not covered by `codesign --deep`).
-    try {
-      execSync(
-        `find "${backendDir}" -type f \\( -name "*.so" -o -name "*.dylib" -o -perm -u+x \\) ` +
-        `-exec sh -c 'file -b "$1" | grep -q Mach-O && codesign --force --sign - "$1"' _ {} \\;`,
-        { stdio: 'inherit' },
-      )
-    } catch (e) {
-      console.warn('[afterPack] backend ad-hoc signing had errors (continuing):', e.message)
-    }
+    // Sanity: PyInstaller's own ad-hoc signature must still be valid.
+    execSync(`codesign --verify --verbose=1 "${backendExe}"`, { stdio: 'inherit' })
   } else {
     console.warn('[afterPack] backend executable not found at', backendExe)
   }

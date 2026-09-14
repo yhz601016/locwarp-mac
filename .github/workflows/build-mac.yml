@@ -109,6 +109,7 @@ jobs:
           echo "--- backend output ---"
           cat backend-boot.log
           if [ "$ok" != 1 ]; then echo "::error::frozen backend did not answer on :8777"; exit 1; fi
+          grep -q "Lazy import self-check: OK" backend-boot.log || { echo "::error::lazy import self-check failed"; exit 1; }
           echo "frozen backend booted OK"
 
       - name: Install frontend deps
@@ -124,6 +125,32 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+
+      - name: Boot test the backend INSIDE the signed .app
+        # Same test again, but on the bytes that actually ship: after
+        # electron-builder copied the backend into the bundle and afterPack
+        # ad-hoc signed the app. Catches anything the packaging/signing step
+        # does to the PyInstaller archive.
+        run: |
+          APP=$(ls -d frontend/release/mac*/LocWarp.app | head -1)
+          BIN="$APP/Contents/Resources/backend/locwarp-backend"
+          echo "testing $BIN"
+          codesign --verify --verbose=1 "$BIN"
+          LOCWARP_TUNNEL_MODE=userspace "$BIN" > packaged-boot.log 2>&1 &
+          PID=$!
+          ok=0
+          for i in $(seq 1 45); do
+            if curl -sf http://127.0.0.1:8777/ >/dev/null 2>&1; then ok=1; break; fi
+            if ! kill -0 "$PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          sleep 3   # give the lazy-import self-check time to finish logging
+          kill "$PID" 2>/dev/null || true
+          sleep 1
+          cat packaged-boot.log
+          if [ "$ok" != 1 ]; then echo "::error::packaged backend did not answer on :8777"; exit 1; fi
+          grep -q "Lazy import self-check: OK" packaged-boot.log || { echo "::error::packaged backend lazy import self-check failed"; exit 1; }
+          echo "packaged backend OK"
 
       - name: Verify artifacts and write checksums
         # A corrupted archive must never reach a release. unzip -t walks every

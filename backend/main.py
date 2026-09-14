@@ -649,11 +649,70 @@ async def _wifi_tunnel_keepalive():
             logger.debug("WiFi keepalive loop iteration error", exc_info=True)
 
 
+# Modules the device path imports lazily (inside methods). A frozen build can
+# pass a plain "does it boot" test and still be broken here — v0.3.3 shipped
+# with a corrupted module archive that only surfaced on the first DDI mount.
+# Importing them eagerly at startup turns that into a loud log line (and a
+# CI failure), instead of a silent per-device connect loop.
+LAZY_IMPORT_SELFCHECK = (
+    "pymobiledevice3.services.mobile_image_mounter",
+    "pymobiledevice3.remote.rsd_tunnel",
+    "pymobiledevice3.remote.userspace_tunnel",
+    "pymobiledevice3.remote.tunnel_service",
+    "pymobiledevice3.remote.remote_service_discovery",
+    "pymobiledevice3.services.dvt.instruments.dvt_provider",
+    "pymobiledevice3.services.dvt.instruments.location_simulation",
+    "pymobiledevice3.services.simulate_location",
+    "pymobiledevice3.services.amfi",
+    "developer_disk_image.repo",
+    "pyimg4",
+    "core.wifi_tunnel",
+    "core.simulation_engine",
+    "core.navigator",
+    "core.route_loop",
+    "core.multi_stop",
+    "core.flower",
+    "core.random_walk",
+    "core.joystick",
+    "core.restore",
+    "core.goldditto",
+    "services.gpx_service",
+    "services.geocoding",
+    "services.route_service",
+)
+
+
+def _lazy_import_selfcheck() -> None:
+    import importlib
+    import sys as _sys
+    if _sys.platform == "darwin":
+        mods = LAZY_IMPORT_SELFCHECK + ("pymobiledevice3.remote.native_tunnel",)
+    else:
+        mods = LAZY_IMPORT_SELFCHECK
+    failed = []
+    for name in mods:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001
+            failed.append(f"{name}: {type(exc).__name__}: {exc}")
+    if failed:
+        for f in failed:
+            logger.error("Lazy import self-check FAILED: %s", f)
+        logger.error("Lazy import self-check: %d/%d modules failed — this build is broken",
+                     len(failed), len(mods))
+    else:
+        logger.info("Lazy import self-check: OK (%d modules)", len(mods))
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     import asyncio
     # ── Startup ──
     logger.info("LocWarp starting — scanning for devices…")
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _lazy_import_selfcheck)
+    except Exception:
+        logger.exception("Lazy import self-check crashed")
     try:
         devices = await app_state.device_manager.discover_devices()
         if devices:
