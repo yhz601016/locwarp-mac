@@ -69,6 +69,31 @@ jobs:
           ls -la "$GITHUB_WORKSPACE/dist-py/locwarp-backend" | head
           test -x "$GITHUB_WORKSPACE/dist-py/locwarp-backend/locwarp-backend"
 
+      - name: Boot test the frozen backend
+        # Start the PyInstaller bundle exactly like Electron will, wait for
+        # the HTTP API, then stop it. Catches missing modules / dylib
+        # mismatches (e.g. the libssl 3.0 vs 3.2 collision) before we ship.
+        run: |
+          BIN="$GITHUB_WORKSPACE/dist-py/locwarp-backend/locwarp-backend"
+          echo "--- OpenSSL libs bundled ---"
+          ls -la "$GITHUB_WORKSPACE/dist-py/locwarp-backend/_internal" | grep -iE 'libssl|libcrypto' || true
+          otool -L "$GITHUB_WORKSPACE/dist-py/locwarp-backend/_internal/cryptography/hazmat/bindings/_rust.abi3.so" | head -5 || true
+          echo "--- boot ---"
+          LOCWARP_TUNNEL_MODE=userspace "$BIN" > backend-boot.log 2>&1 &
+          PID=$!
+          ok=0
+          for i in $(seq 1 45); do
+            if curl -sf http://127.0.0.1:8777/ >/dev/null 2>&1; then ok=1; break; fi
+            if ! kill -0 "$PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          kill "$PID" 2>/dev/null || true
+          sleep 1
+          echo "--- backend output ---"
+          cat backend-boot.log
+          if [ "$ok" != 1 ]; then echo "::error::frozen backend did not answer on :8777"; exit 1; fi
+          echo "frozen backend booted OK"
+
       - name: Install frontend deps
         working-directory: frontend
         run: npm ci

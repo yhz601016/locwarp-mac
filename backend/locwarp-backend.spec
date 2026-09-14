@@ -99,6 +99,67 @@ a = Analysis(
     noarchive=False,
 )
 
+
+def _dedupe_openssl_dylibs(analysis):
+    """macOS: keep exactly one libssl / libcrypto, the newest one.
+
+    Python's own framework ships OpenSSL 3.0.x, while the `cryptography`
+    wheel (and anything built against Homebrew) links OpenSSL 3.2+. Both
+    are named libssl.3.dylib; PyInstaller flattens them into _internal/
+    and whichever wins is a coin toss. If the 3.0 copy wins, cryptography
+    dies at import with "Symbol not found: _SSL_get0_group_name" and the
+    backend never starts. OpenSSL 3.x is ABI-compatible within the major
+    version, so the newest copy satisfies every consumer.
+    """
+    import re
+
+    if sys.platform != "darwin":
+        return
+    names = ("libssl.3.dylib", "libcrypto.3.dylib")
+    ver_re = re.compile(rb"OpenSSL (3\.\d+\.\d+)")
+
+    def version_of(path):
+        try:
+            with open(path, "rb") as fh:
+                m = ver_re.search(fh.read())
+            return tuple(int(x) for x in m.group(1).split(".")) if m else (0,)
+        except Exception:
+            return (0,)
+
+    entries = list(analysis.binaries)
+    groups = {}
+    for dest, src, kind in entries:
+        base = dest.replace("\\", "/").split("/")[-1]
+        if base in names:
+            groups.setdefault(base, []).append((dest, src, kind))
+    if not groups:
+        return
+
+    best_src = {}
+    for base, items in groups.items():
+        srcs = {src for _d, src, _k in items}
+        best = max(srcs, key=version_of)
+        best_src[base] = best
+        print(f"[spec] {base}: {len(srcs)} candidate(s); keeping {best} "
+              f"(OpenSSL {'.'.join(map(str, version_of(best)))})")
+
+    seen = set()
+    new_entries = []
+    for dest, src, kind in entries:
+        base = dest.replace("\\", "/").split("/")[-1]
+        if base in best_src:
+            # Collapse every copy onto ONE top-level entry pointing at the newest file.
+            if base in seen:
+                continue
+            seen.add(base)
+            new_entries.append((base, best_src[base], kind))
+        else:
+            new_entries.append((dest, src, kind))
+    analysis.binaries = new_entries
+
+
+_dedupe_openssl_dylibs(a)
+
 pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
