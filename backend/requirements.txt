@@ -1,4 +1,4 @@
-pymobiledevice3>=11.23.0
+pymobiledevice3>=11.28.2
 pmd-pytcp>=0.3.7
 fastapi>=0.141.1
 uvicorn[standard]>=0.52.4
